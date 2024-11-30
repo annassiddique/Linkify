@@ -1,0 +1,14 @@
+services:
+  mysql:
+    image: mysql/mysql-server:8.0.23
+    environment:
+      MYSQL_DATABASE: linkify
+      MYSQL_ROOT_PASSWORD: Batman7569
+    ports:
+      - '3306:3306'
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - '1025:1025'
+      - '8025:8025'
