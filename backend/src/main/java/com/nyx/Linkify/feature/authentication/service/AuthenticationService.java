@@ -8,6 +8,9 @@ import com.nyx.Linkify.feature.authentication.utils.EmailService;
 import com.nyx.Linkify.feature.authentication.utils.Encoder;
 import com.nyx.Linkify.feature.authentication.utils.JsonWebToken;
 import jakarta.mail.MessagingException;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.transaction.Transactional;
 import jakarta.validation.Valid;
 import org.springframework.stereotype.Service;
 
@@ -25,6 +28,13 @@ public class AuthenticationService {
     private final AuthenticateUserRepo authenticateUserRepo;
     private final EmailService emailService;
     private final int durationInMintes = 1;
+
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+
+
 
     public AuthenticationService(JsonWebToken jsonWebToken, Encoder encoder, AuthenticateUserRepo authenticateUserRepo, EmailService emailService) {
         this.jsonWebToken = jsonWebToken;
@@ -128,66 +138,89 @@ public class AuthenticationService {
 
 
     public void sendPasswordResetToken(String email) {
-        Optional<AuthenticationUser> authenticationUser = authenticateUserRepo.findByEmail(email);
-        if (authenticationUser.isPresent()) {
+        Optional<AuthenticationUser> user = authenticateUserRepo.findByEmail(email);
+        if (user.isPresent()) {
             String passwordResetToken = generateEmailVerificationToken();
             String hashedToken = encoder.encode(passwordResetToken);
-            authenticationUser.get().setPasswordResetToken(hashedToken);
-            authenticationUser.get().setPasswordResetTokenExpiryDate(LocalDateTime.now().plusMinutes(durationInMintes));
-            authenticateUserRepo.save(authenticationUser.get());
-            String subject = "Password Reset Token";
+            user.get().setPasswordResetToken(hashedToken);
+            user.get().setPasswordResetTokenExpiryDate(LocalDateTime.now().plusMinutes(durationInMintes));
+            authenticateUserRepo.save(user.get());
+            String subject = "Password Reset";
             String body = String.format("""
-                You requested a password reset \n
-                
-                Enter this code to verify your email : " + "%s\n\n" + "The code will expire in %s"+"minutes"
-                """,passwordResetToken, durationInMintes);
+                            You requested a password reset.
+                            
+                            Enter this code to reset your password: %s. The code will expire in %s minutes.""",
+                    passwordResetToken, durationInMintes);
             try {
-                emailService.sendEmail(email,subject,body);
-            }catch (Exception e){
+                emailService.sendEmail(email, subject, body);
+            } catch (Exception e) {
                 logger.info("Error while sending email: {}");
             }
-        }else {
-            throw new IllegalArgumentException("Email not found");
+        } else {
+            throw new IllegalArgumentException("User not found.");
         }
     }
 
 
 
     public void resetPassword(String email, String newPassword, String token) {
-        Optional<AuthenticationUser> authenticationUser = authenticateUserRepo.findByEmail(email);
-        if (authenticationUser.isPresent() && encoder.matches(token, authenticationUser.get().getEmailVerificationToken()) && !authenticationUser.get().getEmailVerificationTokenExpiryDate().isBefore(LocalDateTime.now())) {
-            authenticationUser.get().setPasswordResetToken(null);
-            authenticationUser.get().setPasswordResetTokenExpiryDate(null);
-            authenticationUser.get().setPassword(encoder.encode(newPassword));
-            authenticateUserRepo.save(authenticationUser.get());
-        } else if
-        (authenticationUser.isPresent() && encoder.matches(token, authenticationUser.get().getEmailVerificationToken()) && authenticationUser.get().getEmailVerificationTokenExpiryDate().isBefore(LocalDateTime.now()))
-        {
-            throw new IllegalArgumentException("Password reset token expired");
-        } else{
-            throw new IllegalArgumentException("Password reset token failed");
+        // Retrieve the user by email
+        Optional<AuthenticationUser> user = authenticateUserRepo.findByEmail(email);
+
+
+        if (!user.isPresent()) {
+            throw new IllegalArgumentException("User not found.");
         }
 
+        // Get the user object
+        AuthenticationUser authenticationUser = user.get();
+
+        // Validate the token
+        boolean isTokenValid = encoder.matches(token, authenticationUser.getPasswordResetToken());
+
+        // Check if the token is valid and not expired
+        if (isTokenValid && !authenticationUser.getPasswordResetTokenExpiryDate().isBefore(LocalDateTime.now())) {
+            // Token is valid and not expired, reset the password
+            authenticationUser.setPasswordResetToken(null);
+            authenticationUser.setPasswordResetTokenExpiryDate(null);
+            authenticationUser.setPassword(encoder.encode(newPassword)); // Hash the new password
+            authenticateUserRepo.save(authenticationUser);
+        } else if (isTokenValid && authenticationUser.getPasswordResetTokenExpiryDate().isBefore(LocalDateTime.now())) {
+            // Token is expired
+            throw new IllegalArgumentException("Password reset token expired.");
+        } else {
+            // Invalid token
+            throw new IllegalArgumentException("Password reset token failed.");
+        }
     }
 
 
+    public AuthenticationUser updateUserProfile(Long id, String firstName, String lastName, String company, String position, String location) {
+
+        AuthenticationUser user = authenticateUserRepo.findById(id).orElseThrow(()->new RuntimeException("User not found"));
+
+        if(firstName !=null) user.setFirstName(firstName);
+        if(lastName !=null) user.setLastName(lastName);
+        if(company !=null) user.setCompany(company);
+        if(position !=null) user.setPosition(position);
+        if(location !=null) user.setLocation(location);
+
+        return authenticateUserRepo.save(user);
+    }
+
+    @Transactional
+    public void deleteUser(Long userId) {
+        AuthenticationUser user = entityManager.find(AuthenticationUser.class, userId);
+
+        if(user != null){
+            entityManager.createNativeQuery("DELETE FROM post_likes WHERE user_id= :userId")
+                            .setParameter("userId", userId)
+                                    .executeUpdate();
+
+            authenticateUserRepo.deleteById(userId);
+        }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    }
 }
 
